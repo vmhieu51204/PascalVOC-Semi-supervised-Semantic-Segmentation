@@ -5,6 +5,7 @@ import random
 from utils.utils import *
 from PIL import Image
 from augmentations.augmentations import get_albu_transform, get_val_transform, AlbuTransform
+import albumentations as A
 
 IMAGE_SIZE = (320, 320)
 MEAN = [0.485, 0.456, 0.406]
@@ -12,15 +13,14 @@ STD = [0.229, 0.224, 0.225]
 
 #/kaggle/input/pascal-voc-2012/
 class PascalVOC(Dataset):
-    def __init__(self, root,indices=None, co_transform=None, train_phase=True):
+    def __init__(self, root, co_transform=None, train_phase=True):
         self.n_class = 21
         self.root = root
         self.images_root = os.path.join(self.root, 'JPEGImages')
         self.labels_root = os.path.join(self.root, 'SegmentationClass')
         self.img_list = read_img_list(os.path.join(root,'ImageSets/Segmentation/train.txt')) \
                             if train_phase else read_img_list(os.path.join(self.root,'ImageSets/Segmentation/val.txt'))
-        if indices is not None:
-            print('')
+
         self.co_transform = co_transform
         self.train_phase = train_phase
 
@@ -62,24 +62,12 @@ class VOCPseudoLabel(Dataset):
 def make_datasets(home_dir, config):
     download_sb = not os.path.isdir("sb_dataset")
     sbd_train = SBDataset("sb_dataset", image_set="train_noval", mode="segmentation", download=download_sb)
-
-    labes_root = os.path.join('/kaggle/input/pascal-voc-2012-dataset/VOC2012_train_val/VOC2012_train_val/', 'SegmentationClass')
     os.makedirs("pseudo_label", exist_ok=True)
-
-    random.seed(0)
-    torch.manual_seed(0)
-
-    all_img_list = read_img_list(os.path.join(home_dir, 'ImageSets/Segmentation/train.txt'))
-    n_total = len(all_img_list)
-    np.random.seed(config['seed'])
-    idx_labeled = np.random.choice(n_total, int(n_total * config['split']), replace=False)
-    idx_unlabeled = np.setdiff1d(np.arange(n_total), idx_labeled)
 
     co_transform = AlbuTransform(get_albu_transform())
 
     trainset_l = PascalVOC(
         root=home_dir,
-        indices=idx_labeled,
         co_transform=co_transform,
         train_phase=True,
     )
@@ -91,3 +79,5 @@ def make_datasets(home_dir, config):
 
     valset = PascalVOC(home_dir,co_transform=co_transform_val,train_phase=False)
     valoader = DataLoader(valset,batch_size=config['batch_size'], shuffle=False, num_workers=2,drop_last=False)
+    
+    return trainloader_l, trainloader_u, valoader
