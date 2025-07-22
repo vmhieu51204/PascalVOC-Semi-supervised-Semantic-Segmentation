@@ -23,6 +23,7 @@ from models.models import Dis, MeanTeacherNetwork
 from utils.utils import val
 
 import segmentation_models_pytorch as smp
+import argparse
 
 IMAGE_SIZE = (320, 320)
 MEAN = [0.485, 0.456, 0.406]
@@ -43,8 +44,6 @@ config = {
     "g_lr": 0.00025,
     "seed": 1, 
 }
-
-home_dir = '/kaggle/input/pascal-voc-2012-dataset/VOC2012_train_val/VOC2012_train_val/'
 
 def train_semi(generator, discriminator, optimG, optimD, schedG, schedD, trainloader_l, trainloader_u, valoader, config):
     best_miou = -1
@@ -183,9 +182,7 @@ def train_semi(generator, discriminator, optimG, optimD, schedG, schedD, trainlo
                 optimD.step()
                 schedD.step()
 
-                #####################################
                 #  labelled data Generator Training #
-                #####################################
                 optimG.zero_grad()
                 optimD.zero_grad()
 
@@ -292,84 +289,42 @@ def train_semi(generator, discriminator, optimG, optimD, schedG, schedD, trainlo
     print("Saved best snapshot from ",best_epoch, " epoch")
     return epoch_LDr_losses, epoch_LDf_losses, epoch_LGce_losses, epoch_LGadv_losses, epoch_LGsemi_losses
 
-trainloader_l, trainloader_u, valoader = make_datasets(home_dir, config)
+def main(home_dir):
 
-generator = smp.DeepLabV3Plus('efficientnet-b2', encoder_weights='imagenet', 
-                          classes=21, activation=None, encoder_depth=5, decoder_channels=256)
-generator.cuda()
-encoder_params = generator.encoder.parameters()
-decoder_params = list(generator.decoder.parameters()) + list(generator.segmentation_head.parameters())
-print(sum(p.numel() for p in generator.parameters() if p.requires_grad))
-optimG = torch.optim.AdamW([
-    {'params': encoder_params, 'lr': 1e-4},
-    {'params': decoder_params, 'lr': 1e-3}
-], weight_decay=1e-4)
+    trainloader_l, trainloader_u, valoader = make_datasets(home_dir, config)
 
-discriminator = Dis(in_channels=21)
+    generator = smp.DeepLabV3Plus('efficientnet-b2', encoder_weights='imagenet', 
+                            classes=21, activation=None, encoder_depth=5, decoder_channels=256)
+    generator.cuda()
+    encoder_params = generator.encoder.parameters()
+    decoder_params = list(generator.decoder.parameters()) + list(generator.segmentation_head.parameters())
+    print(sum(p.numel() for p in generator.parameters() if p.requires_grad))
+    optimG = torch.optim.AdamW([
+        {'params': encoder_params, 'lr': 1e-4},
+        {'params': decoder_params, 'lr': 1e-3}
+    ], weight_decay=1e-4)
 
-optimD = optim.Adam(filter(lambda p: p.requires_grad, discriminator.parameters()),lr = config['d_lr'],weight_decay=0.0001)
-discriminator.cuda()
-num_batches_per_epoch = len(trainloader_l) + len(trainloader_u)
+    discriminator = Dis(in_channels=21)
 
-total_training_iterations = config['max_epoch'] * num_batches_per_epoch
+    optimD = optim.Adam(filter(lambda p: p.requires_grad, discriminator.parameters()),lr = config['d_lr'],weight_decay=0.0001)
+    discriminator.cuda()
+    num_batches_per_epoch = len(trainloader_l) + len(trainloader_u)
 
-schedG = torch.optim.lr_scheduler.PolynomialLR(optimG, total_iters=total_training_iterations, power=0.9, last_epoch=-1)
-schedD = torch.optim.lr_scheduler.PolynomialLR(optimD, total_iters=total_training_iterations, power=0.9, last_epoch=-1)
-print("Semi-Supervised training")
-train_semi(generator,discriminator,optimG,optimD,schedG,schedD,trainloader_l,trainloader_u,valoader,config)
+    total_training_iterations = config['max_epoch'] * num_batches_per_epoch
+
+    schedG = torch.optim.lr_scheduler.PolynomialLR(optimG, total_iters=total_training_iterations, power=0.9, last_epoch=-1)
+    schedD = torch.optim.lr_scheduler.PolynomialLR(optimD, total_iters=total_training_iterations, power=0.9, last_epoch=-1)
+    print("Semi-Supervised training")
+    train_semi(generator,discriminator,optimG,optimD,schedG,schedD,trainloader_l,trainloader_u,valoader,config)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("home_dir", help="enter the path to the folder with the dataset files",
+                        type=str)
+    args = parser.parse_args()
+    main(args.home_dir)
 
 
 
 
 
-
-
-
-
-import random
-import matplotlib.pyplot as plt
-from torchvision.transforms.functional import to_pil_image
-
-# Put generator in eval mode
-generator.eval()
-
-# Pick a random index
-random_idx = random.randint(0, len(valset) - 1)
-
-# Get the image, label, one-hot (not used here)
-image, label, _ = valset[random_idx]
-image_input = image.unsqueeze(0).cuda()  # Add batch dimension
-
-# Run inference
-with torch.no_grad():
-    output = generator(image_input)
-    pred = torch.argmax(output, dim=1).squeeze(0).cpu().numpy()
-
-# Convert label to numpy
-label = label.cpu().numpy()
-
-# Unnormalize image for visualization
-mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
-std = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
-image_vis = image * std + mean
-image_vis = to_pil_image(image_vis)
-
-# Colormap (Pascal VOC)
-def decode_segmap(mask):
-    palette = pascal_palette_invert()
-    mask_img = Image.fromarray(mask.astype(np.uint8), mode='P')
-    mask_img.putpalette(palette)
-    return mask_img
-
-# Plot
-fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-axs[0].imshow(image_vis)
-axs[0].set_title("Input Image")
-axs[1].imshow(decode_segmap(label))
-axs[1].set_title("Ground Truth")
-axs[2].imshow(decode_segmap(pred))
-axs[2].set_title("Prediction")
-for ax in axs:
-    ax.axis("off")
-plt.tight_layout()
-plt.show()
