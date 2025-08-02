@@ -169,3 +169,31 @@ def val_mt_fused(generator_student, mt_network, valoader, nclass=21, fusion_thre
                 preds.append(pred_i)
     miou, _ = scores(gts, preds, nclass)
     return miou
+
+class mIoU:
+    def __init__(self, num_classes):
+        self.num_classes = num_classes
+        self.hist = np.zeros((num_classes, num_classes))
+
+    def _fast_hist(self, label_pred, label_true):
+        mask = (label_true >= 0) & (label_true < self.num_classes)
+        hist = np.bincount(
+            self.num_classes * label_true[mask].astype(int) +
+            label_pred[mask], minlength=self.num_classes ** 2).reshape(self.num_classes, self.num_classes)
+        return hist
+
+    def add_batch(self, predictions, gts):
+        for lp, lt in zip(predictions, gts):
+            self.hist += self._fast_hist(lp.flatten(), lt.flatten())
+
+    def evaluate(self):
+        iu = np.diag(self.hist) / (self.hist.sum(axis=1) + self.hist.sum(axis=0) - np.diag(self.hist))
+        return np.nanmean(iu)
+
+def pixel_accuracy(output, mask, ignore_index=255):
+    with torch.no_grad():
+        output = torch.argmax(output, dim=1)
+        valid = (mask != ignore_index)
+        correct = torch.eq(output, mask).int() & valid
+        accuracy = float(correct.sum()) / float(valid.sum())
+    return accuracy

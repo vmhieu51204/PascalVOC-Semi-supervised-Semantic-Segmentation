@@ -41,6 +41,42 @@ class PascalVOC(Dataset):
     def __len__(self):
         return len(self.img_list)
 
+class VOCDataset(Dataset):
+    def __init__(self, root, mode, transform=None):
+        self.transform = transform
+        self.root = root
+        self.X = []
+        if mode == "test":
+            self.img_path = os.path.join(self.root, 'JPEGImages')
+            self.mask_path = os.path.join(self.root, 'SegmentationClass')
+            filepath = os.path.join(root,'ImageSets/Segmentation/test.txt')
+        else:
+            self.img_path = os.path.join(self.root, 'JPEGImages')
+            self.mask_path = os.path.join(self.root, 'SegmentationClass')
+            if mode == "train":
+                filepath = os.path.join(root,'ImageSets/Segmentation/train.txt')
+            elif mode == "val":
+                filepath = os.path.join(root,'ImageSets/Segmentation/val.txt')
+        with open(filepath, 'r') as file:
+            for line in file:
+                self.X.append(line.strip())
+        
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        idx = idx % len(self.X)
+        image = np.array(Image.open(self.img_path + self.X[idx] + ".jpg"))
+        mask = np.array(Image.open(self.mask_path + self.X[idx] + ".png"))
+            
+        if self.transform:
+            augmented = self.transform(image=image, mask=mask)
+            image = augmented["image"]
+            mask = augmented["mask"]
+            
+        return image, mask.long()
+
+
 class VOCPseudoLabel(Dataset):
     def __init__(self, base_set, transform=None):
         self.base_set = base_set
