@@ -61,4 +61,24 @@ def main(root, models):
     print("Pixel accuracy: ", val_pa_mt / len(valoader))
     print("Mean teacher mIoU: ", v_miou_mt.evaluate())
 
+    with torch.no_grad():
+        print("Evaluating GAN model...")
+        for i, data in enumerate(tqdm(valoader)):
+            image, mask = data
+            image = image.to(DEVICE)
+            mask = mask.to(DEVICE)
+            
+            output = gan(image)
+            if isinstance(output, tuple):
+                output = output[0]
+
+            val_pa_gan += pixel_accuracy(output, mask)
+            v_miou_gan.add_batch(torch.argmax(output, dim=1).cpu().numpy(), mask.cpu().numpy())
+    print("Pixel accuracy: ", val_pa_gan / len(valoader))
+    print("GAN mIoU: ", v_miou_gan.evaluate())
+
+    miou_s4, pa_s4 = val_mt_fused(gan, mt, valoader)
+    print("Evaluating s4GAN model...")
+    print("Pixel accuracy: ", pa_s4)
+    print("s4GAN mIoU: ",miou_s4)
 
