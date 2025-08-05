@@ -2,7 +2,14 @@ import numpy as np
 import torch
 from torchvision import transforms
 import torch.nn as nn
+from PIL import Image
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+IMAGE_SIZE = (320, 320)
+MEAN = [0.485, 0.456, 0.406]
+STD = [0.229, 0.224, 0.225]
+NUM_CLASSES = 21
+BATCH_SIZE = 12
 
 #Helper functions
 class OneHotEncode(object):
@@ -169,6 +176,65 @@ def val_mt_fused(generator_student, mt_network, valoader, nclass=21, fusion_thre
                 preds.append(pred_i)
     miou, _ = scores(gts, preds, nclass)
     return miou
+
+def denormalize_image_tensor(tensor, mean, std):
+    """Denormalizes a tensor image with mean and standard deviation.
+    Args:
+        tensor (torch.Tensor): Tensor image of size (C, H, W) to be denormalized.
+        mean (list): Mean for each channel.
+        std (list): Standard deviation for each channel.
+    Returns:
+        torch.Tensor: Denormalized tensor image.
+    """
+    denormalized_tensor = tensor.clone().cpu()
+    for t, m, s in zip(denormalized_tensor, mean, std):
+        t.mul_(s).add_(m)
+    return torch.clamp(denormalized_tensor, 0, 1)
+
+# Helper function to convert a segmentation mask tensor to an RGB PIL Image
+def tensor_mask_to_rgb_pil(mask_tensor, flat_palette):
+    """Converts a HxW tensor mask to an RGB PIL Image using a flat palette."""
+    mask_numpy = mask_tensor.cpu().numpy().astype(np.uint8)
+    mask_numpy[mask_numpy == 255] = 0 
+    pil_image = Image.fromarray(mask_numpy, mode='P')
+    pil_image.putpalette(flat_palette)
+    return pil_image.convert('RGB')
+
+# Helper function to get prediction from a standard segmentation model for a single image
+def get_model_prediction_single_image(model, image_tensor_batch, device=DEVICE):
+    """Generates prediction for a single image batch from a standard model."""
+    model.eval()
+    with torch.no_grad():
+        logits = model(image_tensor_batch)
+        if isinstance(logits, tuple): # Handle models returning multiple outputs
+            logits = logits[0]
+        hard_pred = torch.argmax(logits.squeeze(0), dim=0) # (H, W)
+        return hard_pred.cpu()
+
+def get_mt_teacher_prediction_single_image(mt_network, image_tensor_batch, device=DEVICE):
+    """Generates prediction for a single image batch from the MT's teacher model."""
+    mt_network.eval()
+    with torch.no_grad():
+        _, teacher_logits = mt_network(image_tensor_batch)
+        hard_pred = torch.argmax(teacher_logits.squeeze(0), dim=0) # (H, W)
+        return hard_pred.cpu()
+
+# Helper function for the special s4gan fused prediction (GAN student + MT student)
+def get_s4gan_fused_prediction_single_image(gan_student_model, mt_network, image_tensor_batch, fusion_threshold=0.2, device=DEVICE):
+    """Generates fused prediction for a single image batch (GAN student + MT student)."""
+    gan_student_model.eval()
+    mt_network.eval() 
+
+    with torch.no_grad():
+        gan_student_logits = gan_student_model(image_tensor_batch)
+        _ , mt_student_logits = mt_network(image_tensor_batch)
+        mt_student_probs = F.softmax(mt_student_logits, dim=1)
+        deactivation_mask = (mt_student_probs <= fusion_threshold)
+        fused_logits = gan_student_logits.clone()
+        fused_logits[deactivation_mask] = -1e9
+        hard_pred = torch.argmax(fused_logits.squeeze(0), dim=0)
+        return hard_pred.cpu()
+
 
 class mIoU:
     def __init__(self, num_classes):

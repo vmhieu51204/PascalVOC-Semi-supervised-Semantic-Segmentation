@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from torchvision.transforms import ToTensor,Compose
+from torchvision.transforms import ToTensor,Compose, ToPILImage
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
@@ -19,6 +19,8 @@ from albumentations.pytorch import ToTensorV2
 from torchvision.datasets import SBDataset, VOCSegmentation
 from tqdm.notebook import tqdm
 import segmentation_models_pytorch as smp
+import matplotlib.pyplot as plt
+import random
 
 from utils.utils import *
 from data.datasets  import VOCDataset
@@ -81,4 +83,88 @@ def main(root, models):
     print("Evaluating s4GAN model...")
     print("Pixel accuracy: ", pa_s4)
     print("s4GAN mIoU: ",miou_s4)
+    random_id = 800
+    if 'valset' not in globals():
+        print("Error: `valset` is not defined. Please ensure the dataset loading code from your setup has been run.")
+    else:
+        random_idx = random_id
+        input_tensor, gt_mask_tensor = valset[random_idx] 
+
+        original_image_denormalized_tensor = denormalize_image_tensor(input_tensor, MEAN, STD)
+        original_image_pil = ToPILImage()(original_image_denormalized_tensor)
+
+        model_input_batch = input_tensor.unsqueeze(0).to(DEVICE)
+
+        if 'pascal_palette_invert' not in globals():
+            print("Error: `pascal_palette_invert` function is not defined.")
+            exit()
+        flat_pascal_palette = pascal_palette_invert()
+
+        gt_mask_rgb_pil = tensor_mask_to_rgb_pil(gt_mask_tensor, flat_pascal_palette)
+        
+        model_predictions_rgb = {}
+        prediction_order = [] # To maintain a specific order for plotting
+
+        # Define models and their names in the desired plotting order
+        models_to_process = [
+            ("Base", base),
+            ("ST", st),
+            ("ST++", stpp),
+            ("GAN ", gan)
+        ]
+
+        for name, model_obj in models_to_process:
+            print(f"Generating prediction for {name}...")
+            pred_mask_tensor = get_model_prediction_single_image(model_obj, model_input_batch)
+            model_predictions_rgb[name] = tensor_mask_to_rgb_pil(pred_mask_tensor, flat_pascal_palette)
+            prediction_order.append(name)
+
+        # Prediction from Mean Teacher's teacher model
+        mt_teacher_name = "Mean Teacher (Teacher)"
+        print(f"Generating prediction for {mt_teacher_name}...")
+        mt_teacher_pred_tensor = get_mt_teacher_prediction_single_image(mt, model_input_batch)
+        model_predictions_rgb[mt_teacher_name] = tensor_mask_to_rgb_pil(mt_teacher_pred_tensor, flat_pascal_palette)
+        prediction_order.append(mt_teacher_name)
+        
+        # Prediction for the special s4gan fused model
+        s4gan_fused_name = "S4GAN"
+        print(f"Generating prediction for {s4gan_fused_name}...")
+        s4gan_fused_pred_tensor = get_s4gan_fused_prediction_single_image(gan, mt, model_input_batch)
+        model_predictions_rgb[s4gan_fused_name] = tensor_mask_to_rgb_pil(s4gan_fused_pred_tensor, flat_pascal_palette)
+        prediction_order.append(s4gan_fused_name)
+
+        # 4. Plotting in a 3x3 grid
+        # Total items: Original, GT (2) + number of model predictions (7) = 9 items.
+        
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10)) # 3 rows, 3 columns
+        ax_flat = axes.ravel() # Flatten the 2D array of axes for easy indexing
+        
+        # Plot Model Predictions
+        # Start plotting predictions from the 3rd subplot (index 2)
+        for i, name in enumerate(prediction_order):
+            plot_idx = i  # ax_flat[0] and ax_flat[1] are already used
+            if plot_idx < 9: # Ensure we are within the 3x3 grid
+                ax_flat[plot_idx].imshow(model_predictions_rgb[name])
+                ax_flat[plot_idx].set_title(name)
+                ax_flat[plot_idx].axis('off')
+            else: # Should not happen if we have 7 predictions + 2 images for a 3x3 grid
+                print(f"Warning: More plots than expected for a 3x3 grid. Skipping '{name}'.")
+                
+        # Turn off axes for any remaining empty subplots (if fewer than 9 items total)
+        # This loop handles cases where you might have fewer than 7 model predictions later.
+        # For the current setup (2 fixed + 7 predictions = 9), this loop won't do anything extra
+        # as all 9 cells will be filled.
+        for i in range(len(prediction_order), 6): # from the next empty cell up to 8
+            ax_flat[i].axis('off')
+            
+        plt.tight_layout()
+        # --- Save the plot ---
+        plot_filename = f"segmentation_{random_id}.png"
+        try:
+            plt.savefig(plot_filename, dpi=600, bbox_inches='tight') # dpi for resolution, bbox_inches for tight layout
+            print(f"Plot saved successfully as {plot_filename}")
+        except Exception as e:
+            print(f"Error saving plot: {e}")
+        # --- End save the plot ---
+        plt.show()
 
