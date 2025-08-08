@@ -44,6 +44,9 @@ def main(root, models):
     v_miou_gan = mIoU(num_classes=21)
     val_pa_mt = 0
     val_pa_gan = 0
+
+    base = torch.load(os.join(models,"deeplab-base.pt"), weights_only=False)
+    full = torch.load(os.join(models,"deeplab-full.pt"), weights_only=False)
     mt = torch.load(os.join(models, "mt_eff.pt"), weights_only=False)
     gan = torch.load(os.join(models, "experiment_01.pt"), weights_only=False)
     mt.to(DEVICE)
@@ -84,6 +87,7 @@ def main(root, models):
     print("Pixel accuracy: ", pa_s4)
     print("s4GAN mIoU: ",miou_s4)
     random_id = 800
+
     if 'valset' not in globals():
         print("Error: `valset` is not defined. Please ensure the dataset loading code from your setup has been run.")
     else:
@@ -103,13 +107,14 @@ def main(root, models):
         gt_mask_rgb_pil = tensor_mask_to_rgb_pil(gt_mask_tensor, flat_pascal_palette)
         
         model_predictions_rgb = {}
-        prediction_order = [] # To maintain a specific order for plotting
-
-        # Define models and their names in the desired plotting order
+        prediction_order = [] 
+        gt_mask_rgb_pil = tensor_mask_to_rgb_pil(gt_mask_tensor, flat_pascal_palette)
+        ground_truth = "Ground Truth"
+        model_predictions_rgb[ground_truth] = gt_mask_rgb_pil
+        prediction_order.append(ground_truth)
         models_to_process = [
             ("Base", base),
-            ("ST", st),
-            ("ST++", stpp),
+            ("Full", full),
             ("GAN ", gan)
         ]
 
@@ -133,28 +138,18 @@ def main(root, models):
         model_predictions_rgb[s4gan_fused_name] = tensor_mask_to_rgb_pil(s4gan_fused_pred_tensor, flat_pascal_palette)
         prediction_order.append(s4gan_fused_name)
 
-        # 4. Plotting in a 3x3 grid
-        # Total items: Original, GT (2) + number of model predictions (7) = 9 items.
-        
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10)) # 3 rows, 3 columns
-        ax_flat = axes.ravel() # Flatten the 2D array of axes for easy indexing
-        
-        # Plot Model Predictions
-        # Start plotting predictions from the 3rd subplot (index 2)
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10)) 
+        ax_flat = axes.ravel() 
+
         for i, name in enumerate(prediction_order):
-            plot_idx = i  # ax_flat[0] and ax_flat[1] are already used
-            if plot_idx < 9: # Ensure we are within the 3x3 grid
+            plot_idx = i  
+            if plot_idx < 9: 
                 ax_flat[plot_idx].imshow(model_predictions_rgb[name])
                 ax_flat[plot_idx].set_title(name)
                 ax_flat[plot_idx].axis('off')
-            else: # Should not happen if we have 7 predictions + 2 images for a 3x3 grid
+            else: 
                 print(f"Warning: More plots than expected for a 3x3 grid. Skipping '{name}'.")
-                
-        # Turn off axes for any remaining empty subplots (if fewer than 9 items total)
-        # This loop handles cases where you might have fewer than 7 model predictions later.
-        # For the current setup (2 fixed + 7 predictions = 9), this loop won't do anything extra
-        # as all 9 cells will be filled.
-        for i in range(len(prediction_order), 6): # from the next empty cell up to 8
+        for i in range(len(prediction_order), 6):
             ax_flat[i].axis('off')
             
         plt.tight_layout()
